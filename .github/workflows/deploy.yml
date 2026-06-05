@@ -32,7 +32,7 @@ jobs:
         run: npm ci
 
       - name: Build
-        run: npm run build
+        run: npm run build -- --base=/LiMS-front/
 
       - name: Add SPA fallback
         run: cp dist/index.html dist/404.html
