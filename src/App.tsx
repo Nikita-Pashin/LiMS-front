@@ -10,6 +10,30 @@ import {
   setWeeekTaskCompleted,
 } from './lib/weeekApi';
 
+type AppPath = '/' | '/tasks';
+
+const APP_BASE_PATH = normalizeBasePath(import.meta.env.BASE_URL);
+
+function normalizeBasePath(baseUrl: string): string {
+  if (!baseUrl || baseUrl === '/') {
+    return '';
+  }
+  return baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+}
+
+function getAppPathFromLocation(): AppPath {
+  const { pathname } = window.location;
+  const withoutBase = APP_BASE_PATH && pathname.startsWith(APP_BASE_PATH)
+    ? pathname.slice(APP_BASE_PATH.length) || '/'
+    : pathname;
+
+  return withoutBase === '/tasks' ? '/tasks' : '/';
+}
+
+function toBrowserPath(path: AppPath): string {
+  return `${APP_BASE_PATH}${path === '/' ? '/' : path}`;
+}
+
 function setTaskCompletedInTree(
   source: TaskItem[],
   taskId: string,
@@ -30,7 +54,7 @@ function setTaskCompletedInTree(
 }
 
 export default function App() {
-  const [path, setPath] = useState(window.location.pathname);
+  const [path, setPath] = useState<AppPath>(() => getAppPathFromLocation());
   const [token, setToken] = useState(() => getStoredToken());
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [authLoading, setAuthLoading] = useState(false);
@@ -51,7 +75,7 @@ export default function App() {
   }, [taskDateKey]);
 
   useEffect(() => {
-    const handlePopState = () => setPath(window.location.pathname);
+    const handlePopState = () => setPath(getAppPathFromLocation());
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
@@ -69,9 +93,10 @@ export default function App() {
     void loadTasks(token, taskDateKey);
   }, [path, token, taskDateKey]);
 
-  function navigate(nextPath: '/' | '/tasks') {
-    if (window.location.pathname !== nextPath) {
-      window.history.pushState({}, '', nextPath);
+  function navigate(nextPath: AppPath) {
+    const browserPath = toBrowserPath(nextPath);
+    if (window.location.pathname !== browserPath) {
+      window.history.pushState({}, '', browserPath);
     }
     setPath(nextPath);
   }
