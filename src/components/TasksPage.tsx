@@ -1,5 +1,10 @@
-import { CSSProperties } from 'react';
+import { CSSProperties, useEffect, useState } from 'react';
 import { TaskItem } from '../lib/weeekApi';
+
+type ActiveTaskTimer = {
+  task: TaskItem;
+  startedAt: number;
+};
 
 type TasksPageProps = {
   tasks: TaskItem[];
@@ -12,6 +17,11 @@ type TasksPageProps = {
   onReload: () => Promise<void>;
   onResetToken: () => void;
   onTaskCompleteChange: (taskId: string, completed: boolean) => void;
+  activeTaskTimer: ActiveTaskTimer | null;
+  timerTaskIdInFlight: string;
+  timerErrorMessage: string;
+  onStartTaskTimer: (task: TaskItem) => void;
+  onStopTaskTimer: () => void;
 };
 
 export function TasksPage({
@@ -25,6 +35,11 @@ export function TasksPage({
   onReload,
   onResetToken,
   onTaskCompleteChange,
+  activeTaskTimer,
+  timerTaskIdInFlight,
+  timerErrorMessage,
+  onStartTaskTimer,
+  onStopTaskTimer,
 }: TasksPageProps) {
   const titleDateLabel = formatRuDateLabel(selectedDateKey);
   const isToday = selectedDateKey === formatLocalDateKey(new Date());
@@ -85,10 +100,24 @@ export function TasksPage({
               key={task.id}
               task={task}
               level={0}
+              activeTaskTimer={activeTaskTimer}
+              timerTaskIdInFlight={timerTaskIdInFlight}
               onTaskCompleteChange={onTaskCompleteChange}
+              onStartTaskTimer={onStartTaskTimer}
+              onStopTaskTimer={onStopTaskTimer}
             />
           ))}
         </ul>
+      ) : null}
+
+      {timerErrorMessage ? <p style={timerErrorStyle}>{timerErrorMessage}</p> : null}
+
+      {activeTaskTimer ? (
+        <ActiveTimerBar
+          activeTaskTimer={activeTaskTimer}
+          isStopping={timerTaskIdInFlight === activeTaskTimer.task.id}
+          onStopTaskTimer={onStopTaskTimer}
+        />
       ) : null}
     </section>
   );
@@ -112,16 +141,32 @@ function formatRuDateLabel(isoDateKey: string): string {
 type TaskCardProps = {
   task: TaskItem;
   level: number;
+  activeTaskTimer: ActiveTaskTimer | null;
+  timerTaskIdInFlight: string;
   onTaskCompleteChange: (taskId: string, completed: boolean) => void;
+  onStartTaskTimer: (task: TaskItem) => void;
+  onStopTaskTimer: () => void;
 };
 
-function TaskCard({ task, level, onTaskCompleteChange }: TaskCardProps) {
+function TaskCard({
+  task,
+  level,
+  activeTaskTimer,
+  timerTaskIdInFlight,
+  onTaskCompleteChange,
+  onStartTaskTimer,
+  onStopTaskTimer,
+}: TaskCardProps) {
+  const isTimerActive = activeTaskTimer?.task.id === task.id;
+  const isTimerBusy = timerTaskIdInFlight === task.id;
+
   return (
     <li
       style={{
         ...itemStyle,
+        ...(isTimerActive ? activeItemStyle : {}),
         marginLeft: level > 0 ? `${Math.min(level * 18, 54)}px` : 0,
-        borderLeft: level > 0 ? '3px solid #1d4ed8' : itemStyle.borderLeft,
+        borderLeft: level > 0 && !isTimerActive ? '3px solid #1d4ed8' : itemStyle.borderLeft,
       }}
     >
       <div style={taskRowStyle}>
@@ -135,6 +180,25 @@ function TaskCard({ task, level, onTaskCompleteChange }: TaskCardProps) {
         <span style={{ ...taskTitleStyle, ...(task.completed ? completedTitleStyle : {}) }}>
           {task.title}
         </span>
+        {isTimerActive ? (
+          <button
+            type="button"
+            onClick={onStopTaskTimer}
+            disabled={isTimerBusy}
+            style={stopTimerButtonStyle}
+          >
+            {isTimerBusy ? 'Остановка...' : 'Остановить'}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => onStartTaskTimer(task)}
+            disabled={Boolean(timerTaskIdInFlight)}
+            style={startTimerButtonStyle}
+          >
+            {isTimerBusy ? 'Запуск...' : 'Таймер'}
+          </button>
+        )}
       </div>
       {task.subtasksLoading ? <p style={loadingSubtasksStyle}>Загрузка подзадач...</p> : null}
 
@@ -145,13 +209,71 @@ function TaskCard({ task, level, onTaskCompleteChange }: TaskCardProps) {
               key={subtask.id}
               task={subtask}
               level={level + 1}
+              activeTaskTimer={activeTaskTimer}
+              timerTaskIdInFlight={timerTaskIdInFlight}
               onTaskCompleteChange={onTaskCompleteChange}
+              onStartTaskTimer={onStartTaskTimer}
+              onStopTaskTimer={onStopTaskTimer}
             />
           ))}
         </ul>
       ) : null}
     </li>
   );
+}
+
+function ActiveTimerBar({
+  activeTaskTimer,
+  isStopping,
+  onStopTaskTimer,
+}: {
+  activeTaskTimer: ActiveTaskTimer;
+  isStopping: boolean;
+  onStopTaskTimer: () => void;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  return (
+    <div style={activeTimerBarStyle}>
+      <div style={activeTimerContentStyle}>
+        <div style={activeTimerMetaStyle}>
+          <span style={activeTimerLabelStyle}>Таймер задачи</span>
+          <strong style={activeTimerTitleStyle}>{activeTaskTimer.task.title}</strong>
+        </div>
+        <span style={activeTimerTimeStyle}>
+          {formatElapsedTime(now - activeTaskTimer.startedAt)}
+        </span>
+        <button
+          type="button"
+          onClick={onStopTaskTimer}
+          disabled={isStopping}
+          style={activeTimerStopButtonStyle}
+        >
+          {isStopping ? 'Остановка...' : 'Остановить'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function formatElapsedTime(elapsedMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const mm = String(minutes).padStart(2, '0');
+  const ss = String(seconds).padStart(2, '0');
+
+  if (hours > 0) {
+    return `${hours}:${mm}:${ss}`;
+  }
+
+  return `${mm}:${ss}`;
 }
 
 const wrapperStyle: CSSProperties = {
@@ -245,6 +367,11 @@ const itemStyle: CSSProperties = {
   background: '#020617',
 };
 
+const activeItemStyle: CSSProperties = {
+  borderColor: '#22c55e',
+  boxShadow: '0 0 0 1px rgba(34, 197, 94, 0.35)',
+};
+
 const taskRowStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'flex-start',
@@ -266,6 +393,7 @@ const taskTitleStyle: CSSProperties = {
   fontWeight: 700,
   flex: 1,
   lineHeight: 1.35,
+  overflowWrap: 'anywhere',
 };
 
 const completedTitleStyle: CSSProperties = {
@@ -303,6 +431,85 @@ const primaryButtonStyle: CSSProperties = {
   color: '#e0f2fe',
   background: '#1d4ed8',
   cursor: 'pointer',
+};
+
+const startTimerButtonStyle: CSSProperties = {
+  border: '1px solid #2563eb',
+  borderRadius: '10px',
+  padding: '7px 10px',
+  fontWeight: 700,
+  color: '#dbeafe',
+  background: '#1e3a8a',
+  cursor: 'pointer',
+  flexShrink: 0,
+};
+
+const stopTimerButtonStyle: CSSProperties = {
+  ...startTimerButtonStyle,
+  borderColor: '#b91c1c',
+  color: '#fee2e2',
+  background: '#7f1d1d',
+};
+
+const timerErrorStyle: CSSProperties = {
+  margin: '16px 0 0',
+  color: '#fca5a5',
+};
+
+const activeTimerBarStyle: CSSProperties = {
+  position: 'fixed',
+  left: 0,
+  right: 0,
+  bottom: 0,
+  zIndex: 20,
+  padding: '12px 24px',
+  background: 'rgba(2, 6, 23, 0.96)',
+  borderTop: '1px solid #334155',
+  boxShadow: '0 -16px 40px rgba(2, 6, 23, 0.45)',
+};
+
+const activeTimerContentStyle: CSSProperties = {
+  width: '100%',
+  maxWidth: '800px',
+  margin: '0 auto',
+  display: 'flex',
+  alignItems: 'center',
+  gap: '16px',
+};
+
+const activeTimerMetaStyle: CSSProperties = {
+  minWidth: 0,
+  flex: 1,
+  display: 'grid',
+  gap: '2px',
+};
+
+const activeTimerLabelStyle: CSSProperties = {
+  color: '#86efac',
+  fontSize: '12px',
+  fontWeight: 700,
+  textTransform: 'uppercase',
+};
+
+const activeTimerTitleStyle: CSSProperties = {
+  color: '#f8fafc',
+  fontSize: '15px',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+};
+
+const activeTimerTimeStyle: CSSProperties = {
+  minWidth: '72px',
+  color: '#f8fafc',
+  fontVariantNumeric: 'tabular-nums',
+  fontWeight: 800,
+  textAlign: 'right',
+};
+
+const activeTimerStopButtonStyle: CSSProperties = {
+  ...stopTimerButtonStyle,
+  padding: '9px 12px',
 };
 
 const secondaryButtonStyle: CSSProperties = {

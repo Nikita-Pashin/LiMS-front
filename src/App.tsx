@@ -8,9 +8,15 @@ import {
   fetchTasksForDate,
   filterTasksByCompletion,
   setWeeekTaskCompleted,
+  startWeeekTaskTimer,
+  stopWeeekTaskTimer,
 } from './lib/weeekApi';
 
 type AppPath = '/' | '/tasks';
+type ActiveTaskTimer = {
+  task: TaskItem;
+  startedAt: number;
+};
 
 const APP_BASE_PATH = normalizeBasePath(import.meta.env.BASE_URL);
 
@@ -53,6 +59,36 @@ function setTaskCompletedInTree(
   });
 }
 
+function setActiveTimerInTree(
+  source: TaskItem[],
+  taskId: string,
+  startedAt: number | null,
+): TaskItem[] {
+  return source.map((task) => ({
+    ...task,
+    activeTimerStartedAt: task.id === taskId ? startedAt : null,
+    subtasks: setActiveTimerInTree(task.subtasks, taskId, startedAt),
+  }));
+}
+
+function findActiveTaskTimer(source: TaskItem[]): ActiveTaskTimer | null {
+  for (const task of source) {
+    if (task.activeTimerStartedAt !== null) {
+      return {
+        task,
+        startedAt: task.activeTimerStartedAt,
+      };
+    }
+
+    const subtaskTimer = findActiveTaskTimer(task.subtasks);
+    if (subtaskTimer) {
+      return subtaskTimer;
+    }
+  }
+
+  return null;
+}
+
 export default function App() {
   const [path, setPath] = useState<AppPath>(() => getAppPathFromLocation());
   const [token, setToken] = useState(() => getStoredToken());
@@ -61,9 +97,13 @@ export default function App() {
   const [tasksLoading, setTasksLoading] = useState(false);
   const [authError, setAuthError] = useState('');
   const [tasksError, setTasksError] = useState('');
+  const [timerError, setTimerError] = useState('');
+  const [timerTaskIdInFlight, setTimerTaskIdInFlight] = useState('');
+  const [activeTaskTimer, setActiveTaskTimer] = useState<ActiveTaskTimer | null>(null);
   const [taskDateKey, setTaskDateKey] = useState(() => formatLocalDateKey(new Date()));
   const [showCompletedTasks, setShowCompletedTasks] = useState(false);
   const subtasksContextDateRef = useRef(taskDateKey);
+  const activeTaskTimerRef = useRef<ActiveTaskTimer | null>(null);
 
   const visibleTasks = useMemo(
     () => filterTasksByCompletion(tasks, showCompletedTasks),
@@ -73,6 +113,10 @@ export default function App() {
   useEffect(() => {
     subtasksContextDateRef.current = taskDateKey;
   }, [taskDateKey]);
+
+  useEffect(() => {
+    activeTaskTimerRef.current = activeTaskTimer;
+  }, [activeTaskTimer]);
 
   useEffect(() => {
     const handlePopState = () => setPath(getAppPathFromLocation());
@@ -134,6 +178,7 @@ export default function App() {
     try {
       const result = await fetchTasksForDate(currentToken, day);
       setTasks(result);
+      setActiveTaskTimer(findActiveTaskTimer(result));
       void loadSubtasksInBackground(currentToken, result, dateKey);
     } catch {
       setTasksError('Не удалось загрузить задачи из Weeek API.');
@@ -154,6 +199,57 @@ export default function App() {
       setTasks((prev) => setTaskCompletedInTree(prev, taskId, !completed));
     }
   }, [token]);
+
+  const handleStartTaskTimer = useCallback(async (task: TaskItem) => {
+    if (!token || timerTaskIdInFlight) {
+      return;
+    }
+    if (activeTaskTimerRef.current?.task.id === task.id) {
+      return;
+    }
+
+    setTimerError('');
+    setTimerTaskIdInFlight(task.id);
+    try {
+      const previousTimer = activeTaskTimerRef.current;
+      if (previousTimer && previousTimer.task.id !== task.id) {
+        await stopWeeekTaskTimer(token, previousTimer.task.id);
+      }
+      await startWeeekTaskTimer(token, task.id);
+      const startedAt = Date.now();
+      setTasks((prev) => setActiveTimerInTree(prev, task.id, startedAt));
+      setActiveTaskTimer({
+        task: {
+          ...task,
+          activeTimerStartedAt: startedAt,
+        },
+        startedAt,
+      });
+    } catch {
+      setTimerError('Не удалось запустить таймер задачи.');
+    } finally {
+      setTimerTaskIdInFlight('');
+    }
+  }, [timerTaskIdInFlight, token]);
+
+  const handleStopTaskTimer = useCallback(async () => {
+    const currentTimer = activeTaskTimerRef.current;
+    if (!token || !currentTimer || timerTaskIdInFlight) {
+      return;
+    }
+
+    setTimerError('');
+    setTimerTaskIdInFlight(currentTimer.task.id);
+    try {
+      await stopWeeekTaskTimer(token, currentTimer.task.id);
+      setTasks((prev) => setActiveTimerInTree(prev, currentTimer.task.id, null));
+      setActiveTaskTimer(null);
+    } catch {
+      setTimerError('Не удалось остановить таймер задачи.');
+    } finally {
+      setTimerTaskIdInFlight('');
+    }
+  }, [timerTaskIdInFlight, token]);
 
   function updateTaskById(
     source: TaskItem[],
@@ -191,13 +287,18 @@ export default function App() {
           if (subtasksContextDateRef.current !== dateKeyWhenStarted) {
             return;
           }
-          setTasks((previous) =>
-            updateTaskById(previous, root.id, (task) => ({
+          setTasks((previous) => {
+            const nextTasks = updateTaskById(previous, root.id, (task) => ({
               ...task,
               subtasks,
               subtasksLoading: false,
-            })),
-          );
+            }));
+            const nextTimer = findActiveTaskTimer(nextTasks);
+            if (nextTimer) {
+              setActiveTaskTimer(nextTimer);
+            }
+            return nextTasks;
+          });
         } catch {
           if (subtasksContextDateRef.current !== dateKeyWhenStarted) {
             return;
@@ -218,6 +319,8 @@ export default function App() {
     setToken('');
     setTasks([]);
     setTasksError('');
+    setTimerError('');
+    setActiveTaskTimer(null);
     navigate('/');
   }
 
@@ -235,6 +338,11 @@ export default function App() {
           onReload={() => loadTasks(token, taskDateKey)}
           onResetToken={handleResetToken}
           onTaskCompleteChange={handleTaskCompleteChange}
+          activeTaskTimer={activeTaskTimer}
+          timerTaskIdInFlight={timerTaskIdInFlight}
+          timerErrorMessage={timerError}
+          onStartTaskTimer={handleStartTaskTimer}
+          onStopTaskTimer={handleStopTaskTimer}
         />
       );
     }
@@ -257,7 +365,12 @@ export default function App() {
     tasksError,
     tasksLoading,
     token,
+    activeTaskTimer,
+    timerError,
+    timerTaskIdInFlight,
     handleTaskCompleteChange,
+    handleStartTaskTimer,
+    handleStopTaskTimer,
   ]);
 
   return (

@@ -12,6 +12,7 @@ export type TaskItem = {
   parentId: string | null;
   title: string;
   completed: boolean;
+  activeTimerStartedAt: number | null;
   subTaskIds: string[];
   subtasksLoading: boolean;
   subtasks: TaskItem[];
@@ -73,6 +74,28 @@ function postJson(path: string, token: string, body: unknown = {}): Promise<Resp
   });
 }
 
+function postEmpty(path: string, token: string): Promise<Response> {
+  return fetch(`${getBaseUrl()}${path}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+  });
+}
+
+function postText(path: string, token: string, body = ''): Promise<Response> {
+  return fetch(`${getBaseUrl()}${path}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+      'Content-Type': 'text/plain',
+    },
+    body,
+  });
+}
+
 /** Mark task completed (POST …/complete) or return to active (POST …/return). */
 export async function setWeeekTaskCompleted(
   token: string,
@@ -80,10 +103,27 @@ export async function setWeeekTaskCompleted(
   completed: boolean,
 ): Promise<void> {
   const id = encodeURIComponent(taskId);
-  const path = completed ? `/tm/tasks/${id}/complete` : `/tm/tasks/${id}/return`;
-  const response = await postJson(path, token, {});
+  const response = completed
+    ? await postJson(`/tm/tasks/${id}/complete`, token, {})
+    : await postText(`/tm/tasks/${id}/un-complete`, token);
   if (!response.ok) {
-    throw new Error(`Weeek API ${completed ? 'complete' : 'return'} failed: ${response.status}`);
+    throw new Error(`Weeek API ${completed ? 'complete' : 'un-complete'} failed: ${response.status}`);
+  }
+}
+
+export async function startWeeekTaskTimer(token: string, taskId: string): Promise<void> {
+  const id = encodeURIComponent(taskId);
+  const response = await postEmpty(`/tm/tasks/${id}/start-timer`, token);
+  if (!response.ok) {
+    throw new Error(`Weeek API start timer failed: ${response.status}`);
+  }
+}
+
+export async function stopWeeekTaskTimer(token: string, taskId: string): Promise<void> {
+  const id = encodeURIComponent(taskId);
+  const response = await postEmpty(`/tm/tasks/${id}/stop-timer`, token);
+  if (!response.ok) {
+    throw new Error(`Weeek API stop timer failed: ${response.status}`);
   }
 }
 
@@ -148,6 +188,9 @@ function isRawTaskCompleted(task: UnknownRecord): boolean {
   if (typeof done === 'boolean') {
     return done;
   }
+  if (typeof done === 'number') {
+    return done === 1;
+  }
 
   const status = task.status ?? task.state;
   if (typeof status === 'string') {
@@ -167,6 +210,47 @@ function isRawTaskCompleted(task: UnknownRecord): boolean {
   }
 
   return false;
+}
+
+function getActiveTimerStartedAt(task: UnknownRecord): number | null {
+  if (typeof task.timer === 'object' && task.timer !== null) {
+    const timer = task.timer as UnknownRecord;
+    const startedAt = timer.startedAt;
+    if (typeof startedAt === 'string' && startedAt.trim()) {
+      const timestamp = new Date(startedAt).getTime();
+      if (!Number.isNaN(timestamp)) {
+        return timestamp;
+      }
+    }
+  }
+
+  if (!Array.isArray(task.timeEntries)) {
+    return null;
+  }
+
+  const activeEntry = task.timeEntries.find((entry) => {
+    if (typeof entry !== 'object' || entry === null) {
+      return false;
+    }
+    return (entry as UnknownRecord).type === 2;
+  });
+
+  if (typeof activeEntry !== 'object' || activeEntry === null) {
+    return null;
+  }
+
+  const entry = activeEntry as UnknownRecord;
+  const durationSeconds = entry.durationSeconds;
+  if (typeof durationSeconds === 'number' && Number.isFinite(durationSeconds)) {
+    return Date.now() - Math.max(0, durationSeconds) * 1000;
+  }
+
+  const durationMinutes = entry.duration;
+  if (typeof durationMinutes === 'number' && Number.isFinite(durationMinutes)) {
+    return Date.now() - Math.max(0, durationMinutes) * 60 * 1000;
+  }
+
+  return Date.now();
 }
 
 function extractSubTaskIds(task: UnknownRecord): string[] {
@@ -214,6 +298,7 @@ function toParsedTask(task: UnknownRecord): ParsedTask | null {
           : null,
       title: titleRaw.trim(),
       completed: isRawTaskCompleted(task),
+      activeTimerStartedAt: getActiveTimerStartedAt(task),
       subTaskIds: extractSubTaskIds(task),
       subtasksLoading: false,
       subtasks: [],
