@@ -17,6 +17,7 @@ type ActiveTaskTimer = {
   task: TaskItem;
   startedAt: number;
 };
+type TaskViewMode = 'default' | 'compact';
 
 const APP_BASE_PATH = normalizeBasePath(import.meta.env.BASE_URL);
 
@@ -102,6 +103,7 @@ export default function App() {
   const [activeTaskTimer, setActiveTaskTimer] = useState<ActiveTaskTimer | null>(null);
   const [taskDateKey, setTaskDateKey] = useState(() => formatLocalDateKey(new Date()));
   const [showCompletedTasks, setShowCompletedTasks] = useState(false);
+  const [taskViewMode, setTaskViewMode] = useState<TaskViewMode>('default');
   const subtasksContextDateRef = useRef(taskDateKey);
   const activeTaskTimerRef = useRef<ActiveTaskTimer | null>(null);
 
@@ -335,6 +337,8 @@ export default function App() {
           onDateKeyChange={setTaskDateKey}
           showCompletedTasks={showCompletedTasks}
           onShowCompletedTasksChange={setShowCompletedTasks}
+          taskViewMode={taskViewMode}
+          onTaskViewModeChange={setTaskViewMode}
           onReload={() => loadTasks(token, taskDateKey)}
           onResetToken={handleResetToken}
           onTaskCompleteChange={handleTaskCompleteChange}
@@ -360,6 +364,7 @@ export default function App() {
     authLoading,
     path,
     showCompletedTasks,
+    taskViewMode,
     taskDateKey,
     visibleTasks,
     tasksError,

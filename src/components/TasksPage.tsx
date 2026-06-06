@@ -5,6 +5,7 @@ type ActiveTaskTimer = {
   task: TaskItem;
   startedAt: number;
 };
+type TaskViewMode = 'default' | 'compact';
 
 type TasksPageProps = {
   tasks: TaskItem[];
@@ -14,6 +15,8 @@ type TasksPageProps = {
   onDateKeyChange: (dateKey: string) => void;
   showCompletedTasks: boolean;
   onShowCompletedTasksChange: (value: boolean) => void;
+  taskViewMode: TaskViewMode;
+  onTaskViewModeChange: (value: TaskViewMode) => void;
   onReload: () => Promise<void>;
   onResetToken: () => void;
   onTaskCompleteChange: (taskId: string, completed: boolean) => void;
@@ -32,6 +35,8 @@ export function TasksPage({
   onDateKeyChange,
   showCompletedTasks,
   onShowCompletedTasksChange,
+  taskViewMode,
+  onTaskViewModeChange,
   onReload,
   onResetToken,
   onTaskCompleteChange,
@@ -43,9 +48,11 @@ export function TasksPage({
 }: TasksPageProps) {
   const titleDateLabel = formatRuDateLabel(selectedDateKey);
   const isToday = selectedDateKey === formatLocalDateKey(new Date());
+  const isCompactView = taskViewMode === 'compact';
+  const displayTasks = isCompactView ? flattenTasks(tasks) : tasks;
 
   return (
-    <section style={wrapperStyle}>
+    <section style={{ ...wrapperStyle, ...(isCompactView ? compactWrapperStyle : {}) }}>
       <div style={toolbarStyle}>
         <label style={dateLabelStyle} htmlFor="tasks-date">
           Дата
@@ -66,6 +73,28 @@ export function TasksPage({
           />
           Показывать выполненные
         </label>
+        <div style={viewModeControlStyle}>
+          <button
+            type="button"
+            onClick={() => onTaskViewModeChange('default')}
+            style={{
+              ...viewModeButtonStyle,
+              ...(taskViewMode === 'default' ? activeViewModeButtonStyle : {}),
+            }}
+          >
+            Обычный
+          </button>
+          <button
+            type="button"
+            onClick={() => onTaskViewModeChange('compact')}
+            style={{
+              ...viewModeButtonStyle,
+              ...(taskViewMode === 'compact' ? activeViewModeButtonStyle : {}),
+            }}
+          >
+            Компактный
+          </button>
+        </div>
       </div>
       <header style={headerStyle}>
         <h1 style={titleStyle}>
@@ -94,12 +123,12 @@ export function TasksPage({
       ) : null}
 
       {!isLoading && !errorMessage && tasks.length > 0 ? (
-        <ul style={listStyle}>
-          {tasks.map((task) => (
+        <ul style={isCompactView ? compactListStyle : listStyle}>
+          {displayTasks.map((task) => (
             <TaskCard
               key={task.id}
               task={task}
-              level={0}
+              isCompactView={isCompactView}
               activeTaskTimer={activeTaskTimer}
               timerTaskIdInFlight={timerTaskIdInFlight}
               onTaskCompleteChange={onTaskCompleteChange}
@@ -138,9 +167,19 @@ function formatRuDateLabel(isoDateKey: string): string {
   return `${d}.${m}.${y}`;
 }
 
+function flattenTasks(source: TaskItem[]): TaskItem[] {
+  return source.flatMap((task) => [
+    {
+      ...task,
+      subtasks: [],
+    },
+    ...flattenTasks(task.subtasks),
+  ]);
+}
+
 type TaskCardProps = {
   task: TaskItem;
-  level: number;
+  isCompactView: boolean;
   activeTaskTimer: ActiveTaskTimer | null;
   timerTaskIdInFlight: string;
   onTaskCompleteChange: (taskId: string, completed: boolean) => void;
@@ -150,7 +189,7 @@ type TaskCardProps = {
 
 function TaskCard({
   task,
-  level,
+  isCompactView,
   activeTaskTimer,
   timerTaskIdInFlight,
   onTaskCompleteChange,
@@ -164,9 +203,11 @@ function TaskCard({
     <li
       style={{
         ...itemStyle,
+        ...(isCompactView ? compactItemStyle : {}),
         ...(isTimerActive ? activeItemStyle : {}),
-        marginLeft: level > 0 ? `${Math.min(level * 18, 54)}px` : 0,
-        borderLeft: level > 0 && !isTimerActive ? '3px solid #1d4ed8' : itemStyle.borderLeft,
+        marginBottom: isCompactView ? '12px' : undefined,
+        breakInside: isCompactView ? 'avoid' : undefined,
+        pageBreakInside: isCompactView ? 'avoid' : undefined,
       }}
     >
       <div style={taskRowStyle}>
@@ -202,13 +243,13 @@ function TaskCard({
       </div>
       {task.subtasksLoading ? <p style={loadingSubtasksStyle}>Загрузка подзадач...</p> : null}
 
-      {!task.subtasksLoading && task.subtasks.length > 0 ? (
+      {!isCompactView && !task.subtasksLoading && task.subtasks.length > 0 ? (
         <ul style={subtasksListStyle}>
           {task.subtasks.map((subtask) => (
             <TaskCard
               key={subtask.id}
               task={subtask}
-              level={level + 1}
+              isCompactView={isCompactView}
               activeTaskTimer={activeTaskTimer}
               timerTaskIdInFlight={timerTaskIdInFlight}
               onTaskCompleteChange={onTaskCompleteChange}
@@ -218,6 +259,7 @@ function TaskCard({
           ))}
         </ul>
       ) : null}
+
     </li>
   );
 }
@@ -286,6 +328,11 @@ const wrapperStyle: CSSProperties = {
   boxShadow: '0 16px 40px rgba(2, 6, 23, 0.45)',
 };
 
+const compactWrapperStyle: CSSProperties = {
+  maxWidth: 'none',
+  minHeight: 'calc(100vh - 48px)',
+};
+
 const toolbarStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
@@ -330,6 +377,32 @@ const filterCheckboxStyle: CSSProperties = {
   cursor: 'pointer',
 };
 
+const viewModeControlStyle: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '2px',
+  padding: '3px',
+  border: '1px solid #334155',
+  borderRadius: '10px',
+  background: '#020617',
+};
+
+const viewModeButtonStyle: CSSProperties = {
+  border: 'none',
+  borderRadius: '7px',
+  padding: '7px 10px',
+  color: '#94a3b8',
+  background: 'transparent',
+  fontSize: '13px',
+  fontWeight: 700,
+  cursor: 'pointer',
+};
+
+const activeViewModeButtonStyle: CSSProperties = {
+  color: '#f8fafc',
+  background: '#1d4ed8',
+};
+
 const headerStyle: CSSProperties = {
   display: 'flex',
   justifyContent: 'space-between',
@@ -352,6 +425,14 @@ const listStyle: CSSProperties = {
   gap: '12px',
 };
 
+const compactListStyle: CSSProperties = {
+  listStyle: 'none',
+  padding: 0,
+  margin: '16px 0 0',
+  columnWidth: '300px',
+  columnGap: '12px',
+};
+
 const subtasksListStyle: CSSProperties = {
   listStyle: 'none',
   padding: 0,
@@ -365,6 +446,13 @@ const itemStyle: CSSProperties = {
   borderRadius: '12px',
   padding: '12px',
   background: '#020617',
+};
+
+const compactItemStyle: CSSProperties = {
+  display: 'inline-block',
+  width: '100%',
+  padding: '10px',
+  borderRadius: '10px',
 };
 
 const activeItemStyle: CSSProperties = {
