@@ -1,1 +1,0 @@
-{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/taskspage.tsx","./src/components/tokenpage.tsx","./src/components/welcomecard.tsx","./src/lib/tokenstorage.ts","./src/lib/weeekapi.ts"],"version":"5.9.3"}
