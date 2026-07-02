@@ -1,4 +1,5 @@
 import type { Preview } from '@storybook/react-vite';
+import '../src/design-system/lms.css';
 
 const preview: Preview = {
   parameters: {
